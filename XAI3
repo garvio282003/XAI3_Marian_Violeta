@@ -1,0 +1,154 @@
+---
+title: "XAI3"
+author: "Marián García Mas y Violeta García Rodriguez"
+---
+
+```{r}
+library(randomForest)
+library(pdp)
+library(ggplot2)
+library(dplyr)
+```
+# EXERCISE 1
+
+```{r}
+data <- read.csv("./day.csv")
+
+data$MISTY <- as.integer(data$weathersit == 2) 
+data$RAIN <- as.integer(data$weathersit %in% c(3, 4)) 
+
+h_max <- 100
+data$hum <- data$hum * h_max
+
+t_max <- 39
+t_min <- -8
+data$temp <- data$temp * (t_max - t_min) + t_min 
+
+w_max <- 67
+data$windspeed <- data$windspeed * w_max
+
+data$days_since_2011 <- as.numeric(as.Date(data$dteday) - as.Date("2011-01-01"))
+season_encoding <- model.matrix(~ factor(data$season) - 1) 
+colnames(season_encoding) <- c("season1", "season2", "season3", "season4")
+data <- cbind(data, season_encoding)
+
+model_data <- data[, c("workingday", "holiday", "season2", "season3", "season4", 
+                       "MISTY", "RAIN", "temp", "hum", "windspeed", 
+                       "days_since_2011", "cnt")]
+
+
+rf_model <- randomForest(cnt ~ ., data = model_data, ntree = 500)
+
+pdp_temp <- partial(rf_model, pred.var = "temp", grid.resolution = 20)
+ggplot(pdp_temp, aes(x = temp, y = yhat)) +
+  geom_line() + 
+  geom_rug(data = model_data, aes(x = temp), sides = "b", inherit.aes = FALSE) +
+  labs(title = "Partial Dependence Plot - Temperature", y = "Predicted bike rentals", x = "Temperature") +
+  theme_minimal()
+
+pdp_days <- partial(rf_model, pred.var = "days_since_2011", grid.resolution = 20)
+ggplot(pdp_days, aes(x = days_since_2011, y = yhat)) +
+  geom_line() + 
+  geom_rug(data = model_data, aes(x = days_since_2011), sides = "b", inherit.aes = FALSE) +
+  labs(title = "Partial Dependence Plot - Days Since 2011", y = "Predicted bike rentals", x = "Days Since 2011") +
+  theme_minimal()
+
+pdp_hum <- partial(rf_model, pred.var = "hum", grid.resolution = 20)
+ggplot(pdp_hum, aes(x = hum, y = yhat)) +
+  geom_line() + 
+  geom_rug(data = model_data, aes(x = hum), sides = "b", inherit.aes = FALSE) +
+  labs(title = "Partial Dependence Plot - Humidity", y = "Predicted bike rentals", x = "Humidity") +
+  theme_minimal()
+
+pdp_wind <- partial(rf_model, pred.var = "windspeed", grid.resolution = 20)
+ggplot(pdp_wind, aes(x = windspeed, y = yhat)) +
+  geom_line() + 
+  geom_rug(data = model_data, aes(x = windspeed), sides = "b", inherit.aes = FALSE) +
+  labs(title = "Partial Dependence Plot - Wind Speed", y = "Predicted bike rentals", x = "Wind Speed") +
+  theme_minimal()
+
+```
+
+# EXERCISE 2
+
+```{r}
+
+sample_size <- min(1000, nrow(model_data))
+set.seed(123)
+sampled_data <- model_data[sample(nrow(model_data), sample_size), ]
+
+
+rf_model <- randomForest(cnt ~ ., data = sampled_data, ntree = 500)
+grid_res <- 20
+pdp_2d <- partial(rf_model, pred.var = c("hum", "temp"), grid.resolution = grid_res)
+pdp_2d_df <- as.data.frame(pdp_2d)
+
+width <- ((max(pdp_2d_df$temp) - min(pdp_2d_df$temp)) / grid_res ) + 0.1 # + 0,1 o 0,15 to remove thin white lines between squares
+height <- ((max(pdp_2d_df$hum) - min(pdp_2d_df$hum)) / grid_res ) + 0.15
+
+ggplot() +
+  geom_density2d(data = sampled_data, aes(x = temp, y = hum), color = "white") +
+  geom_tile(data = pdp_2d_df, aes(x = temp, y = hum, fill = yhat), width = width, height = height) +
+  scale_fill_gradient(low = "white", high = "red") +
+  geom_rug(data = sampled_data, aes(x = temp), sides = "b") +
+  geom_rug(data = sampled_data, aes(y = hum), sides = "l") +
+  labs(title = "2D Partial Dependence Plot - Temperature and Humidity",
+       x = "Temperature",
+       y = "Humidity",
+       fill = "Predicted bike rentals") +
+  theme_minimal()
+
+```
+
+# EXERCISE 3
+
+```{r}
+
+house_data <- read.csv("./kc_house_data.csv")
+features <- c("bedrooms", "bathrooms", "sqft_living", "sqft_lot", "floors", "yr_built", "price")
+house_data <- house_data[, features]
+
+sample_size <- min(1000, nrow(house_data))
+set.seed(123)
+sampled_data <- house_data[sample(nrow(house_data), sample_size), ]
+
+sampled_data$floors <- round(sampled_data$floors) #round up to nearest whole number
+sampled_data$bathrooms <- round(sampled_data$bathrooms)
+
+rf_model <- randomForest(price ~ ., data = sampled_data, ntree = 500)
+
+pdp_bedrooms <- partial(rf_model, pred.var = "bedrooms", pred.grid = data.frame(bedrooms = unique(sampled_data$bedrooms)))
+pdp_bathrooms <- partial(rf_model, pred.var = "bathrooms", pred.grid = data.frame(bathrooms = unique(sampled_data$bathrooms)))
+pdp_sqft_living <- partial(rf_model, pred.var = "sqft_living", grid.resolution = 20)
+pdp_floors <- partial(rf_model, pred.var = "floors", pred.grid = data.frame(floors = unique(sampled_data$floors)))
+
+density_bedrooms <- sampled_data %>% group_by(bedrooms) %>% summarise(density = n() / nrow(sampled_data))
+density_bathrooms <- sampled_data %>% group_by(bathrooms) %>% summarise(density = n() / nrow(sampled_data))
+density_floors <- sampled_data %>% group_by(floors) %>% summarise(density = n() / nrow(sampled_data))
+
+ggplot() +
+  geom_line(data = pdp_bedrooms, aes(x = bedrooms, y = yhat)) +
+  geom_rug(data = density_bedrooms, aes(x = bedrooms, size = density), sides = "b") +
+  labs(title = "Partial Dependence Plot - Bedrooms", x = "Bedrooms", y = "Predicted Price") +
+  theme_minimal() + scale_size_continuous(range = c(0.5, 5)) # (0.5, 5) limits the thickness of the rug lines for the categorical features
+
+ggplot() +
+  geom_line(data = pdp_bathrooms, aes(x = bathrooms, y = yhat)) +
+  geom_rug(data = density_bathrooms, aes(x = bathrooms, size = density), sides = "b") +
+  labs(title = "Partial Dependence Plot - Bathrooms", x = "Bathrooms", y = "Predicted Price") +
+  theme_minimal() + scale_size_continuous(range = c(0.5, 5))
+
+ggplot() +
+  geom_line(data = pdp_sqft_living, aes(x = sqft_living, y = yhat)) +
+  geom_rug(data = sampled_data, aes(x = sqft_living), sides = "b", inherit.aes = FALSE, size = 1) +
+  labs(title = "Partial Dependence Plot - Sqft Living", x = "Sqft Living", y = "Predicted Price") +
+  theme_minimal()
+
+ggplot() +
+  geom_line(data = pdp_floors, aes(x = floors, y = yhat)) +
+  geom_rug(data = density_floors, aes(x = floors, size = density), sides = "b") +
+  labs(title = "Partial Dependence Plot - Floors", x = "Floors", y = "Predicted Price") +
+  theme_minimal() + scale_size_continuous(range = c(0.5, 5))
+
+```
+
